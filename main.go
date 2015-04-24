@@ -43,14 +43,14 @@ func getConfig(conf *Config) error {
 }
 
 type ServeHTTP struct {
-	paths []string
+	conf *Config
 }
 
 func (s *ServeHTTP) DealReq(rw http.ResponseWriter, r *http.Request) {
 	var file *os.File
 	var fileName string
 	reqPath := r.URL.Path
-	for _, basePath := range s.paths {
+	for _, basePath := range s.conf.paths {
 		fileName = basePath + reqPath
 		fmt.Println("try to find file", fileName)
 		fi, e := os.Stat(fileName)
@@ -65,32 +65,38 @@ func (s *ServeHTTP) DealReq(rw http.ResponseWriter, r *http.Request) {
 	}
 	io.Copy(rw, file)
 	file.Close()
+
+	if fileName == s.conf.befor {
+		return
+	}
+
 	fmt.Println("rename ", fileName, " to ", fileName+"_"+time.Now().Format("2006-01-02--15-04-05"))
 	e := os.Rename(fileName, fileName+"_"+time.Now().Format("2006-01-02--15-04-05"))
 	fmt.Println(e)
 }
 
-func (s *ServeHTTP) httpListen(conf *Config) {
+func (s *ServeHTTP) httpListen() {
 	serve := new(ServeHTTP)
-	serve.paths = conf.paths
 	h := http.HandlerFunc(serve.DealReq)
-	http.ListenAndServe(":"+conf.port, h)
+	http.ListenAndServe(":"+s.conf.port, h)
 }
 
-type Client struct{}
+type Client struct {
+	conf *Config
+}
 
-func (c *Client) ClientDo(conf *Config) {
+func (c *Client) ClientDo() {
 	for {
 		fmt.Println("wait 3 second to get config")
 		time.Sleep(time.Second * 3)
-		c.Down(conf)
+		checkerr(c.Down())
 	}
 }
 
-func (c *Client) Down(conf *Config) error {
-	rurl := conf.url
+func (c *Client) Down() error {
+	rurl := c.conf.url
 	u, _ := url.Parse(rurl)
-	saveName := conf.out
+	saveName := c.conf.out
 	rsp, e := http.Get(rurl)
 	if e != nil {
 		fmt.Println(e)
@@ -103,20 +109,20 @@ func (c *Client) Down(conf *Config) error {
 		return errors.New("No new file to found")
 	}
 	body, _ := ioutil.ReadAll(rsp.Body)
-	if conf.befor != "" {
+	if c.conf.befor != "" {
 		fmt.Println("down load befor script")
-		if e := c.DownFile("http://"+u.Host+"befor", conf.befor); e != nil {
+		if e := c.DownFile("http://"+u.Host+"befor", c.conf.befor); e != nil {
 			fmt.Println("error donwload befor script")
 		}
 		fmt.Println("run befor script")
-		c.runScript(conf.befor)
+		c.runScript(c.conf.befor)
 	}
 	ioutil.WriteFile(saveName, body, 0644)
-	if conf.after != "" {
+	if c.conf.after != "" {
 		fmt.Println("donwload after script")
-		c.DownFile("http://"+u.Host+"after", conf.after)
+		c.DownFile("http://"+u.Host+"after", c.conf.after)
 		fmt.Println("run after script")
-		c.runScript(conf.after)
+		c.runScript(c.conf.after)
 	}
 	return nil
 }
@@ -141,6 +147,12 @@ func (c *Client) runScript(scriptName string) error {
 	return nil
 }
 
+func checkerr(err error) {
+	if err != nil {
+		fmt.Println(err)
+	}
+}
+
 func main() {
 	conf := new(Config)
 	e := getConfig(conf)
@@ -150,16 +162,17 @@ func main() {
 	}
 
 	client := Client{}
+	client.conf = conf
 	server := new(ServeHTTP)
 
 	fmt.Println("here is:", conf.itype)
-	server.paths = conf.paths
+	server.conf = conf
 	if conf.itype == "server" {
 		fmt.Println("Listen on:", conf.port)
-		server.httpListen(conf)
+		server.httpListen()
 	}
 	if conf.itype == "client" {
 		fmt.Println("Try to get:", conf.url)
-		client.ClientDo(conf)
+		client.ClientDo()
 	}
 }
